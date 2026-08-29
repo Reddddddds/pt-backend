@@ -1,0 +1,17 @@
+{
+  "name": "pt-backend",
+  "version": "1.0.0",
+  "description": "podcast-together 自建后端:与官方 laf 云函数协议一致(Node 原生实现,无需 laf/数据库)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "ws": "^8.17.0"
+  }
+}
