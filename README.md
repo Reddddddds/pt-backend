@@ -51,3 +51,15 @@ location / {
 - roomId 由 laf 的 24 位文档 id 改为 6 位大写字母数字(客户端不感知，反而更好念)
 - Visitor 统计只存内存(不影响功能)
 - 原来的定时触发器 room-clock 变成进程内置的 setInterval
+
+## 致谢
+
+- [yenche123/podcast-together](https://github.com/yenche123/podcast-together) —— 本后端的协议来源，room-operate / web-socket / parse-text / room-clock 均按原项目 laf 云函数逐行对齐实现。
+
+## 开源协议
+
+[MIT License](./LICENSE)
+
+## 联系与交流
+
+欢迎交流与反馈。
