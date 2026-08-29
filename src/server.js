@@ -11,6 +11,17 @@ import * as cheerio from "cheerio"
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const PORT = Number(process.env.PORT || 3000)
+// 访问口令:设置后所有接口和 WebSocket 消息都必须带上 x-pt-token 字段(留空则不校验)
+const TOKEN = process.env.PT_TOKEN || ""
+// parse-text 允许抓取的页面域名后缀(直链 mp3/m4a 不受限)
+const PARSE_HOST_WHITELIST = [
+  "xiaoyuzhoufm.com",
+  "podcasts.apple.com",
+  "pod.link",
+  "youzhiyouxing.cn",
+  "sspai.com",
+  "mp.weixin.qq.com",
+]
 const MAX_ROOM_NUM = 15
 const MIN_DURATION_FOR_A_PERSON = 250   // 同一人两次操作的最小间隔(ms)
 const SWEEP_PERIOD = 15 * 1000          // 房间巡检周期(对应 room-clock 定时触发器)
@@ -244,8 +255,16 @@ const handleLeave = (body) => {
   return { code: "0000" }
 }
 
+// 口令校验;TOKEN 未设置时放行
+const checkToken = (body) => {
+  if (TOKEN && body["x-pt-token"] !== TOKEN) return { code: "E4003" }
+  return null
+}
+
 // 入参校验(对应 checkEntry)
 const checkEntry = (body) => {
+  const tokenErr = checkToken(body)
+  if (tokenErr) return tokenErr
   const localId = body["x-pt-local-id"]
   if (!localId) return { code: "E4000" }
   const { operateType = "", nickName, roomId } = body
@@ -338,6 +357,11 @@ wss.on("connection", (socket) => {
     let req
     try { req = JSON.parse(data.toString()) } catch (e) { return }
     if (!req || !req.operateType || !req.roomId || !req["x-pt-local-id"] || !req["x-pt-stamp"]) {
+      socket.close()
+      return
+    }
+    // 口令校验
+    if (TOKEN && req["x-pt-token"] !== TOKEN) {
       socket.close()
       return
     }
@@ -544,6 +568,8 @@ const parseHtml = (html, originLink) => {
 }
 
 const handleParseText = async (body) => {
+  const tokenErr = checkToken(body)
+  if (tokenErr) return tokenErr
   const link = body.link
   if (!link || !body["x-pt-local-id"]) return { code: "E4000" }
   if (!link.startsWith("http")) return { code: "E4000" }
@@ -551,6 +577,12 @@ const handleParseText = async (body) => {
   if (judgeIsCdnLink(link)) {
     return { code: "0000", data: { infoType: "podcast", audioUrl: link } }
   }
+  // 非直链的网页解析只允许白名单域名,防止被当成开放代理
+  let host = ""
+  try { host = new URL(link).hostname } catch (e) { return { code: "E4000" } }
+  const allowed = PARSE_HOST_WHITELIST.some((suffix) => host === suffix || host.endsWith("." + suffix))
+  if (!allowed) return { code: "E4003" }
+
   const html = await fetchLink(link)
   if (!html) return { code: "E4004" }
   return parseHtml(html, link)
