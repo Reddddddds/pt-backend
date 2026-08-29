@@ -38,19 +38,23 @@ const main = async () => {
   assert(enterB.data.participants.length === 2, "房间内 2 人")
 
   // 4. 两人建立 WebSocket,收 CONNECTED -> 发 FIRST_SEND -> 收 NEW_STATUS
-  const mkClient = (localId, name) =>
+  const mkClient = (localId, name, targetRoomId) =>
     new Promise((resolve, reject) => {
       import("ws").then(({ default: WebSocket }) => {
         const ws = new WebSocket("ws://127.0.0.1:3000")
-        const state = { name, ws, statuses: [], connected: false, firstStatus: null }
+        const state = { name, ws, statuses: [], chats: [], history: null, connected: false, firstStatus: null }
         ws.on("message", (data) => {
           const msg = JSON.parse(data.toString())
           if (msg.responseType === "CONNECTED") {
             state.connected = true
-            ws.send(JSON.stringify({ ...base(localId), operateType: "FIRST_SEND", roomId }))
+            ws.send(JSON.stringify({ ...base(localId), operateType: "FIRST_SEND", roomId: targetRoomId }))
           } else if (msg.responseType === "NEW_STATUS") {
             state.statuses.push(msg.roomStatus)
             if (!state.firstStatus) state.firstStatus = msg.roomStatus
+          } else if (msg.responseType === "CHAT") {
+            state.chats.push(msg.msg)
+          } else if (msg.responseType === "CHAT_HISTORY") {
+            state.history = msg.list
           }
         })
         ws.on("open", () => resolve(state))
@@ -58,8 +62,8 @@ const main = async () => {
       })
     })
 
-  const A = await mkClient("client-A", "A")
-  const B = await mkClient("client-B", "B")
+  const A = await mkClient("client-A", "A", roomId)
+  const B = await mkClient("client-B", "B", roomId)
   await new Promise((r) => setTimeout(r, 500))
   assert(A.connected && B.connected, "双方均收到 CONNECTED")
   assert(A.firstStatus && A.firstStatus.roomId === roomId && A.firstStatus.speedRate === "1", "A 的 FIRST_SEND 得到 NEW_STATUS 初始状态")
@@ -93,6 +97,21 @@ const main = async () => {
   A.ws.send(JSON.stringify({ ...base("client-A"), operateType: "HEARTBEAT", roomId }))
   await new Promise((r) => setTimeout(r, 300))
   assert(true, "ws HEARTBEAT 已发送(无异常断开)")
+
+  // 8.5 聊天:带时间点评论广播给全房间(含发送者自己)
+  A.ws.send(JSON.stringify({ ...base("client-A"), operateType: "CHAT", roomId, text: "我觉得这段绝了", stampSec: 1053 }))
+  B.ws.send(JSON.stringify({ ...base("client-B"), operateType: "CHAT", roomId, text: "自由聊一句", stampSec: null }))
+  await new Promise((r) => setTimeout(r, 500))
+  assert(A.chats.length === 2 && B.chats.length === 2, "双方都收到 2 条聊天广播")
+  assert(A.chats[0].nickName === "房主" && A.chats[0].stampSec === 1053, "时间点评论字段正确")
+  assert(A.chats[1].nickName === "朋友" && A.chats[1].stampSec === null, "自由聊 stampSec 为 null")
+
+  // 8.6 新进房的人能拿到聊天历史(聊天消息在原房间里,先 ENTER 再连 ws)
+  await post("/room-operate", { ...base("client-C"), operateType: "ENTER", roomId, nickName: "新朋友" })
+  const C = await mkClient("client-C", "C", roomId)
+  await new Promise((r) => setTimeout(r, 500))
+  assert(C.history && C.history.length === 2, "新进房收到 CHAT_HISTORY 2 条")
+  C.ws.close()
 
   // 9. 房主创建新房间 -> 旧房间 DELETED
   const create2 = await post("/room-operate", { ...base("client-A"), operateType: "CREATE", nickName: "房主", roomData: { infoType: "podcast", audioUrl: "https://example.com/ep2.mp3" } })

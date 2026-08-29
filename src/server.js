@@ -326,6 +326,10 @@ const socketMeta = new WeakMap()
 
 const broadcastRoomStatus = (roomId, roomStatus) => {
   const msg = JSON.stringify({ responseType: "NEW_STATUS", roomStatus })
+  broadcast(roomId, msg)
+}
+
+const broadcast = (roomId, msg) => {
   for (const client of wss.clients) {
     if (client.readyState !== 1) continue
     const meta = socketMeta.get(client)
@@ -375,6 +379,10 @@ wss.on("connection", (socket) => {
       if (!guestId) { socket.close(); return }
       socketMeta.set(socket, { roomId })
       socket.send(JSON.stringify({ responseType: "NEW_STATUS", roomStatus: roomStatusOf(room) }))
+      // 把最近 50 条聊天记录发给刚进房的人
+      if (room.chat && room.chat.length) {
+        socket.send(JSON.stringify({ responseType: "CHAT_HISTORY", list: room.chat.slice(-50) }))
+      }
       return
     }
 
@@ -410,6 +418,30 @@ wss.on("connection", (socket) => {
 
       const roomStatus = roomStatusOf(room)
       broadcastRoomStatus(roomId, roomStatus)
+      return
+    }
+
+    if (operateType === "CHAT") {
+      const meta = socketMeta.get(socket)
+      if (!meta || meta.roomId !== roomId) { socket.close(); return }
+      const room = rooms.get(roomId)
+      if (!room || room.oState !== "OK") return
+      const guestId = getOperatorGuestId(clientId, room)
+      if (!guestId) { socket.close(); return }
+
+      const text = String(req.text || "").trim().slice(0, 300)
+      if (!text) return
+      // null/undefined 表示自由聊;注意 Number(null) 是 0,必须先判空
+      let stampSec = req.stampSec === null || req.stampSec === undefined ? null : Number(req.stampSec)
+      if (stampSec !== null && (!isFinite(stampSec) || stampSec < 0)) stampSec = null
+
+      const me = (room.participants || []).find((v) => v.nonce === clientId)
+      const msg = { nickName: me ? me.nickName : "听众", text, stampSec, ts: Date.now() }
+      room.chat = room.chat || []
+      room.chat.push(msg)
+      if (room.chat.length > 100) room.chat = room.chat.slice(-100)
+      saveRooms()
+      broadcast(roomId, JSON.stringify({ responseType: "CHAT", msg }))
       return
     }
   })
